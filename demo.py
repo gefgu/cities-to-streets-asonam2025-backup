@@ -3,10 +3,17 @@ import streamlit as st
 import random
 from folium.features import Marker
 from streamlit_folium import st_folium
+from helper import (
+    generate_recommendation,
+    generate_travel_recommendation,
+    generate_travel_recommendation_prompt,
+    get_city_coordinates_data,
+)
+import plotly.graph_objects as go
 
 # Set page to wide mode
 st.set_page_config(layout="wide")
-st.write("# Select Your Top 4 Favorite US Cities")
+st.write("# Select Your Top 6 Favorite US Cities")
 st.write("Click on markers to select your favorite cities in order of preference.")
 
 # Initialize session state to store selected cities if it doesn't exist
@@ -17,46 +24,53 @@ if "selected_cities" not in st.session_state:
 if "recommended_city" not in st.session_state:
     st.session_state.recommended_city = None
 
+# Initialize a state to track if the demo is in "recommendation shown" state
+if "recommendation_shown" not in st.session_state:
+    st.session_state.recommendation_shown = False
+
 # Maximum number of cities that can be selected
-MAX_CITIES = 4
+MAX_CITIES = 6
 
 # Add a slider for k value
-k = st.slider("Select k value for highlighting top cities", 1, 3, 2)
+k = st.slider(
+    "Select k value for highlighting top cities",
+    1,
+    3,
+    2,
+    disabled=st.session_state.recommendation_shown,
+)
 
 # Cities data - major US cities with coordinates
-cities = {
-    "New York": [40.7128, -74.0060],
-    "Los Angeles": [34.0522, -118.2437],
-    "Chicago": [41.8781, -87.6298],
-    "Houston": [29.7604, -95.3698],
-    "Phoenix": [33.4484, -112.0740],
-    "San Francisco": [37.7749, -122.4194],
-}
+cities = get_city_coordinates_data()
 
 
 # Function to recommend a city based on selections
 def recommend_city():
     # Check if we have enough selected cities to make a recommendation
     if len(st.session_state.selected_cities) >= k + 1:
-        # Check if we have at least one green and one orange city
-        has_green = any(i < k for i in range(len(st.session_state.selected_cities)))
-        has_orange = any(i >= k for i in range(len(st.session_state.selected_cities)))
+        # Identify green and orange cities
+        green_cities = [
+            st.session_state.selected_cities[i]
+            for i in range(len(st.session_state.selected_cities))
+            if i < k
+        ]
+        orange_cities = [
+            st.session_state.selected_cities[i]
+            for i in range(len(st.session_state.selected_cities))
+            if i >= k
+        ]
 
-        if has_green and has_orange:
-            # Get all non-selected cities
-            non_selected = [
-                city
-                for city in cities.keys()
-                if city not in st.session_state.selected_cities
-            ]
-            if non_selected:
-                # Randomly select a city to recommend
-                recommended = random.choice(non_selected)
-                # Generate a random confidence percentage between 60% and 95%
-                confidence = random.randint(60, 95)
-                return recommended, confidence
+        # Get non-selected cities
+        non_selected = [
+            city
+            for city in cities.keys()
+            if city not in st.session_state.selected_cities
+        ]
 
-    return None, None
+        # Use helper function to generate recommendation
+        return generate_recommendation(non_selected, green_cities, orange_cities)
+
+    return None, None, None, None
 
 
 # Create map centered on US
@@ -99,6 +113,12 @@ col1, col2 = st.columns([2, 2])
 with col1:
     out = st_folium(m, height=600, width=800)
 
+    # Show a warning message when in recommendation state
+    if st.session_state.recommendation_shown:
+        st.warning(
+            "A recommendation has been made. Please use the Reset button to start again."
+        )
+
 # Display selected cities in the second column
 with col2:
     st.write("## Your Top Cities")
@@ -121,13 +141,22 @@ with col2:
         # Add buttons for actions
         col_rec, col_reset = st.columns(2)
 
-        # Add a get recommendation button
+        # Add a get recommendation button (disabled if recommendation already shown)
         with col_rec:
-            if st.button("Get Recommendation"):
-                recommended_city, confidence = recommend_city()
+            if st.button(
+                "Get Recommendation", disabled=st.session_state.recommendation_shown
+            ):
+                recommended_city, confidence, lime_explanation, distances = (
+                    recommend_city()
+                )
                 if recommended_city:
                     st.session_state.recommended_city = recommended_city
                     st.session_state.confidence = confidence
+                    st.session_state.lime_explanation = (
+                        lime_explanation  # Store the explanation
+                    )
+                    st.session_state.distances = distances  # Store the distances
+                    st.session_state.recommendation_shown = True
                     st.rerun()
                 else:
                     st.warning(
@@ -139,6 +168,7 @@ with col2:
             if st.button("Reset Selections"):
                 st.session_state.selected_cities = []
                 st.session_state.recommended_city = None
+                st.session_state.recommendation_shown = False
                 st.rerun()
 
         # Display recommendation if available
@@ -149,9 +179,100 @@ with col2:
                 f"<span style='color:purple; font-weight:bold; font-size:16px'>Based on your past behavior, we recommend the city {st.session_state.recommended_city} with {st.session_state.confidence}% certainty.</span>",
                 unsafe_allow_html=True,
             )
+            # Add the personalized travel recommendation
+            if (
+                hasattr(st.session_state, "lime_explanation")
+                and st.session_state.lime_explanation
+                and hasattr(st.session_state, "distances")
+                and st.session_state.distances
+            ):
+                travel_recommendation = generate_travel_recommendation_prompt(
+                    st.session_state.recommended_city,
+                    st.session_state.selected_cities[:k],  # Top cities (green)
+                    st.session_state.selected_cities[k:],  # Bottom cities (orange)
+                    st.session_state.lime_explanation,
+                    st.session_state.distances,
+                )
+
+                st.markdown("### Travel Recommendation - Prompt")
+                st.markdown(
+                    f"<div style='padding:15px; border-radius:5px;'><i>{travel_recommendation}</i></div>",
+                    unsafe_allow_html=True,
+                )
+
+            # Display LIME explanation
+            st.markdown("### Explanation")
+            st.write("Factors influencing this recommendation:")
+
+            if (
+                hasattr(st.session_state, "lime_explanation")
+                and st.session_state.lime_explanation
+            ):
+                # Create a bar chart for LIME explanation
+                explanation_data = st.session_state.lime_explanation
+                print(explanation_data)
+                features = list(explanation_data.keys())
+                values = list(explanation_data.values())
+
+                if features and values:
+                    # Sort features by absolute importance
+                    sorted_features_values = sorted(
+                        zip(features, values), key=lambda x: abs(x[1]), reverse=True
+                    )
+                    sorted_features = [x[0] for x in sorted_features_values]
+                    # Top 5 features
+                    sorted_values = [x[1] for x in sorted_features_values]
+
+                    # Create color list based on positive/negative values
+                    colors = [
+                        "green" if value > 0 else "red" for value in sorted_values
+                    ]
+
+                    # Create readable feature names
+                    readable_features = [
+                        feat.replace("mean_top_", "Top: ")
+                        .replace("mean_bottom_", "Bottom: ")
+                        .replace("Distance", "")
+                        for feat in sorted_features
+                    ]
+
+                    fig = go.Figure()
+                    fig.add_trace(
+                        go.Bar(
+                            x=sorted_values,
+                            y=readable_features,
+                            orientation="h",
+                            marker_color=colors,
+                        )
+                    )
+
+                    fig.update_layout(
+                        title="Feature Importance",
+                        xaxis_title="Impact on Recommendation",
+                        yaxis_title="Features",
+                        height=600,
+                    )
+
+                    st.plotly_chart(fig)
+
+                    st.write("#### Interpreting the chart:")
+                    st.write(
+                        "- Green bars (positive values) contribute to recommending this city"
+                    )
+                    st.write(
+                        "- Red bars (negative values) count against this recommendation"
+                    )
+                    st.write("- The larger the bar, the more influential that factor")
+            else:
+                st.info("No detailed explanation available for this recommendation.")
+
+            # Print distances as dict
+            if hasattr(st.session_state, "distances") and st.session_state.distances:
+                st.markdown("### Distance Values")
+                st.json(st.session_state.distances)
 
 # Handle marker clicks
-if out["last_object_clicked"]:
+if out["last_object_clicked"] and not st.session_state.recommendation_shown:
     clicked_coords = (
         out["last_object_clicked"]["lat"],
         out["last_object_clicked"]["lng"],
