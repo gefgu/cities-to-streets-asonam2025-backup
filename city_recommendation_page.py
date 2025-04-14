@@ -47,6 +47,7 @@ def show():
     cities = get_city_coordinates_data()
 
     # Function to recommend a city based on selections
+
     def recommend_city():
         # Check if we have enough selected cities to make a recommendation
         if len(st.session_state.selected_cities) >= k + 1:
@@ -69,10 +70,35 @@ def show():
                 if city not in st.session_state.selected_cities
             ]
 
-            # Use helper function to generate recommendation
-            return generate_recommendation(non_selected, green_cities, orange_cities)
+            # Check if both green and orange cities exist
+            if not green_cities or not orange_cities:
+                st.warning("You need at least one green city and one orange city.")
+                return None, None, None, None
 
-        return None, None, None, None
+            # Use helper function to generate recommendation
+            recommendation_result = generate_recommendation(
+                non_selected, green_cities, orange_cities
+            )
+
+            # Ensure we always return 4 values
+            if recommendation_result and len(recommendation_result) == 4:
+                return recommendation_result
+            elif recommendation_result and len(recommendation_result) == 3:
+                # Add a default empty dictionary for distances
+                return (
+                    recommendation_result[0],
+                    recommendation_result[1],
+                    recommendation_result[2],
+                    {},
+                )
+            else:
+                return None, None, None, None
+
+        else:
+            st.warning(
+                f"Please select at least {k + 1} cities to get a recommendation."
+            )
+            return None, None, None, None
 
     # Create map centered on US
     m = folium.Map(location=[39.8283, -98.5795], zoom_start=4)

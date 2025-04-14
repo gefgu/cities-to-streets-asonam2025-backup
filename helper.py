@@ -35,10 +35,13 @@ def generate_recommendation(non_selected_cities, top_cities, bottom_cities):
         bottom_cities (list): List of lower ranked cities (orange)
 
     Returns:
-        tuple: (recommended_city, confidence_percentage, explanation_dict) or (None, None, None) if no recommendation possible
+        tuple: (recommended_city, confidence_percentage, explanation_dict, distances_dict) or (None, None, None, None) if no recommendation possible
     """
     if not (top_cities and bottom_cities and non_selected_cities):
-        return None, None, None
+        print(
+            f"Missing data: top_cities={top_cities}, bottom_cities={bottom_cities}, non_selected count={len(non_selected_cities)}"
+        )
+        return None, None, None, None
 
     features = [
         "scenesDistance",
@@ -66,6 +69,7 @@ def generate_recommendation(non_selected_cities, top_cities, bottom_cities):
         )
 
         if len(city_pairs) == 0:
+            print("skipped city because of no city pairs")
             # Skip cities with no data
             continue
 
@@ -88,6 +92,7 @@ def generate_recommendation(non_selected_cities, top_cities, bottom_cities):
 
         # Skip if no data for comparison with selected cities
         if len(top_pairs) == 0 or len(bottom_pairs) == 0:
+            print("skipped - no data for comparison with selected citiess")
             continue
 
         top_distances = top_pairs.group_by(["city_name"]).agg(
@@ -115,30 +120,51 @@ def generate_recommendation(non_selected_cities, top_cities, bottom_cities):
         )
 
         df = joined_distances.to_pandas()
+
+        # Skip cities with missing data - ADDING DEBUG PRINT
+        if df.empty:
+            print("skipped city because of empty dataframe")
+            continue
+
         X = df[
             [f"mean_top_{feat}" for feat in features]
             + [f"mean_bottom_{feat}" for feat in features]
         ]
 
         # Skip cities with missing data
-        if X.isna().any().any():
-            continue
+        # if X.isna().any().any():
+        #     print(X)
+        #     print(f"skipped city because of missing data in X: {city}")
+        #     continue
 
         predictions = booster.predict(X)
 
-        # Add LIME explanation
-        feature_names = list(X.columns)
-        explanation = explain_prediction_with_lime(booster, X, feature_names)
+        # Create fallback simple explanation if LIME fails
+        feature_importance = {}
 
-        # Store the explanation results and sort them by absolute value
-        feature_importance_list = explanation.as_list()
-        # Sort by absolute magnitude of feature importance
-        sorted_importance = sorted(
-            feature_importance_list, key=lambda x: abs(x[1]), reverse=True
-        )
+        try:
+            # Add LIME explanation
+            feature_names = list(X.columns)
+            explanation = explain_prediction_with_lime(booster, X, feature_names)
 
-        # Store as ordered dictionary
-        feature_importance = {feat: value for feat, value in sorted_importance}
+            # Store the explanation results and sort them by absolute value
+            feature_importance_list = explanation.as_list()
+            # Sort by absolute magnitude of feature importance
+            sorted_importance = sorted(
+                feature_importance_list, key=lambda x: abs(x[1]), reverse=True
+            )
+
+            # Store as ordered dictionary
+            feature_importance = {feat: value for feat, value in sorted_importance}
+        except Exception as e:
+            print(f"LIME explanation failed for {city}: {e}")
+            # Create a fallback simplified explanation using the raw feature values
+            for feat in features:
+                top_key = f"mean_top_{feat}"
+                bottom_key = f"mean_bottom_{feat}"
+                if top_key in df.columns and bottom_key in df.columns:
+                    feature_importance[top_key] = float(df[top_key].iloc[0])
+                    feature_importance[bottom_key] = float(df[bottom_key].iloc[0])
 
         # Store the raw distance values for this city
         raw_distances = {}
@@ -158,14 +184,24 @@ def generate_recommendation(non_selected_cities, top_cities, bottom_cities):
             "explanation": feature_importance,
         }
 
-    # If no cities were scored, return random recommendation
+    # If no cities were scored, return random recommendation with simple explanation
     if not city_scores:
         if non_selected_cities:
             recommended = random.choice(non_selected_cities)
             confidence = random.randint(60, 95)
-            return recommended, confidence, {}
+
+            # Create a simple explanation
+            simple_explanation = {
+                "random_recommendation": 1.0,
+                "insufficient_data": 0.8,
+            }
+
+            # Create simple distances
+            simple_distances = {"notice": "Insufficient data for detailed analysis"}
+
+            return recommended, confidence, simple_explanation, simple_distances
         else:
-            return None, None, None
+            return None, None, None, None
 
     # Find city with highest score
     recommended = max(city_scores.keys(), key=lambda c: city_scores[c]["score"])
@@ -173,7 +209,7 @@ def generate_recommendation(non_selected_cities, top_cities, bottom_cities):
     # Convert score to confidence percentage (assuming scores are between 0-1)
     # Limit to range between 60-95%
     score = city_scores[recommended]["score"]
-    confidence = int(score * 100)
+    confidence = int(max(60, min(95, score * 100)))
 
     # Return the top recommendation, confidence score, and explanation
     return (
