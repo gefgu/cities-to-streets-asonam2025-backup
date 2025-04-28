@@ -16,14 +16,16 @@ def show():
         ### How it works:
         
         **City Recommendations:**
-        1. Select cities you've enjoyed visiting in the past
-        2. Our algorithm analyzes your travel preferences
-        3. Discover a new city destination that matches your taste
+        1. Select cities you love (want more of) or dislike (want less of)
+        2. Click on interactive map markers to make your selections
+        3. Our algorithm analyzes your preferences and city characteristics
+        4. Discover a new city destination that perfectly matches your taste
         
         **Neighborhood Recommendations:**
-        1. Tell us which neighborhoods you loved in New York and LA
-        2. Indicate areas you found just okay during past visits
-        3. We'll suggest the perfect Miami neighborhood for your next trip
+        1. Explore neighborhoods in New York and Los Angeles on interactive maps
+        2. Select areas you'd love to experience more of
+        3. Indicate neighborhoods that don't match your preferences
+        4. We'll suggest the perfect Miami neighborhood for your next trip
         
         Start exploring new travel destinations now!
         """
