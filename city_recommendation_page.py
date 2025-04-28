@@ -97,7 +97,7 @@ def show():
         2. Select if you want **more** of that city's experience (green) or **less** (orange)
         3. Click the **Get Recommendation** button to find your perfect match
         
-        **Note:** You can select up to 3 cities in each category for the best results.
+        **Note:** You can select up to 3 cities in each category. Adding cities to both categories gives the most accurate recommendations, but you can also use just one category.
         """
     )
 
@@ -231,7 +231,8 @@ def show():
             if st.button(
                 "🔍 Get Recommendation", type="primary", use_container_width=True
             ):
-                if st.session_state.more_of_cities and st.session_state.less_of_cities:
+                # Changed to check if at least one category has cities
+                if st.session_state.more_of_cities or st.session_state.less_of_cities:
                     non_selected = [
                         city
                         for city in cities.keys()
@@ -256,7 +257,7 @@ def show():
                     else:
                         st.error("Unable to generate a recommendation.")
                 else:
-                    st.warning("Please select at least one city in each category.")
+                    st.warning("Please select at least one city in either category.")
         st.markdown("</div>", unsafe_allow_html=True)
 
     # Display recommendation if available

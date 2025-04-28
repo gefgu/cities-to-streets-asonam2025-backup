@@ -37,7 +37,7 @@ def generate_recommendation(non_selected_cities, top_cities, bottom_cities):
     Returns:
         tuple: (recommended_city, confidence_percentage, explanation_dict, distances_dict) or (None, None, None, None) if no recommendation possible
     """
-    if not (top_cities and bottom_cities and non_selected_cities):
+    if not (non_selected_cities) and not (top_cities or bottom_cities):
         print(
             f"Missing data: top_cities={top_cities}, bottom_cities={bottom_cities}, non_selected count={len(non_selected_cities)}"
         )
@@ -91,8 +91,8 @@ def generate_recommendation(non_selected_cities, top_cities, bottom_cities):
         )
 
         # Skip if no data for comparison with selected cities
-        if len(top_pairs) == 0 or len(bottom_pairs) == 0:
-            print("skipped - no data for comparison with selected citiess")
+        if len(top_pairs) == 0 and len(bottom_pairs) == 0:
+            print("skipped - no data for comparison with selected cities")
             continue
 
         top_distances = top_pairs.group_by(["city_name"]).agg(
