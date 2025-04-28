@@ -5,333 +5,467 @@ from folium.features import Marker
 from streamlit_folium import st_folium
 from helper import (
     generate_recommendation,
-    generate_travel_recommendation,
     generate_travel_recommendation_prompt,
     get_city_coordinates_data,
 )
 import plotly.graph_objects as go
+import urllib.parse
 
-# Set page to wide mode
-# st.set_page_config(layout="wide")
+
+# st.set_page_config(layout="wide", page_title="City Explorer", )
 
 
 def show():
-    st.write("# Select Your Top 6 Favorite US Cities")
-    st.write("Click on markers to select your favorite cities in order of preference.")
+    # Header with custom styling for dark mode
+    # Add this to your CSS styles section
+    st.markdown(
+        """
+        <style>
+        .title-container {
+            background-color: #263238;
+            padding: 20px;
+            border-radius: 10px;
+            margin-bottom: 20px;
+            color: #E0E0E0;
+        }
+        .subtitle {
+            color: #FF9800;
+            font-style: italic;
+        }
+        .recommendation-box {
+            background-color: #1A237E;
+            padding: 20px;
+            border-radius: 10px;
+            border-left: 5px solid #7986CB;
+            margin-top: 20px;
+            color: #E0E0E0;
+        }
+        .city-list {
+            background-color: #37474F;
+            padding: 10px;
+            border-radius: 5px;
+            margin-top: 10px;
+            color: #E0E0E0;
+        }
+        .button-container {
+            display: flex;
+            gap: 10px;
+            margin-top: 10px;
+        }
+        .city-selection-card {
+            background-color: #37474F;
+            padding: 15px;
+            border-radius: 10px;
+            margin: 20px 0;
+            color: #E0E0E0;
+        }
+        .confidence-box {
+            padding: 10px;
+            border-radius: 5px;
+            margin-top: 10px;
+            color: #E0E0E0;
+        }
+        .limit-message {
+            background-color: #B71C1C;
+            color: white;
+            padding: 8px;
+            border-radius: 4px;
+            font-size: 14px;
+            margin: 5px 0;
+        }
+        .debug-box {
+            background-color: #303F9F;
+            padding: 15px;
+            border-radius: 10px;
+            margin-top: 20px;
+            color: #E0E0E0;
+            border-left: 5px solid #FF9800;
+        }
+        </style>
+        <div class="title-container">
+            <h1>🏙️ Explore Your Ideal City</h1>
+            <p class="subtitle">Discover cities that match your lifestyle preferences</p>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
 
-    # Initialize session state to store selected cities if it doesn't exist
-    if "selected_cities" not in st.session_state:
-        st.session_state.selected_cities = []
+    st.markdown(
+        """
+        ### How It Works
+        1. **Click on city markers** on the map to view details
+        2. Select if you want **more** of that city's experience (green) or **less** (orange)
+        3. Click the **Get Recommendation** button to find your perfect match
+        
+        **Note:** You can select up to 3 cities in each category for the best results.
+        """
+    )
 
-    # Initialize recommended city if it doesn't exist
+    # Initialize session state for city preferences
+    if "more_of_cities" not in st.session_state:
+        st.session_state.more_of_cities = []
+    if "less_of_cities" not in st.session_state:
+        st.session_state.less_of_cities = []
     if "recommended_city" not in st.session_state:
         st.session_state.recommended_city = None
-
-    # Initialize a state to track if the demo is in "recommendation shown" state
-    if "recommendation_shown" not in st.session_state:
-        st.session_state.recommendation_shown = False
-
-    # Maximum number of cities that can be selected
-    MAX_CITIES = 6
-
-    # Add a slider for k value
-    k = st.slider(
-        "Select k value for highlighting top cities",
-        1,
-        3,
-        2,
-        disabled=st.session_state.recommendation_shown,
-    )
+    if "show_recommendation_details" not in st.session_state:
+        st.session_state.show_recommendation_details = False
+    if "recommendation_data" not in st.session_state:
+        st.session_state.recommendation_data = None
+    if "debug_mode" not in st.session_state:
+        st.session_state.debug_mode = False
 
     # Cities data - major US cities with coordinates
     cities = get_city_coordinates_data()
 
-    # Function to recommend a city based on selections
-
-    def recommend_city():
-        # Check if we have enough selected cities to make a recommendation
-        if len(st.session_state.selected_cities) >= k + 1:
-            # Identify green and orange cities
-            green_cities = [
-                st.session_state.selected_cities[i]
-                for i in range(len(st.session_state.selected_cities))
-                if i < k
-            ]
-            orange_cities = [
-                st.session_state.selected_cities[i]
-                for i in range(len(st.session_state.selected_cities))
-                if i >= k
-            ]
-
-            # Get non-selected cities
-            non_selected = [
-                city
-                for city in cities.keys()
-                if city not in st.session_state.selected_cities
-            ]
-
-            # Check if both green and orange cities exist
-            if not green_cities or not orange_cities:
-                st.warning("You need at least one green city and one orange city.")
-                return None, None, None, None
-
-            # Use helper function to generate recommendation
-            recommendation_result = generate_recommendation(
-                non_selected, green_cities, orange_cities
-            )
-
-            # Ensure we always return 4 values
-            if recommendation_result and len(recommendation_result) == 4:
-                return recommendation_result
-            elif recommendation_result and len(recommendation_result) == 3:
-                # Add a default empty dictionary for distances
-                return (
-                    recommendation_result[0],
-                    recommendation_result[1],
-                    recommendation_result[2],
-                    {},
-                )
-            else:
-                return None, None, None, None
-
-        else:
-            st.warning(
-                f"Please select at least {k + 1} cities to get a recommendation."
-            )
-            return None, None, None, None
-
     # Create map centered on US
-    m = folium.Map(location=[39.8283, -98.5795], zoom_start=4)
+    m = folium.Map(
+        location=[39.8283, -98.5795],
+        zoom_start=4,
+        tiles="CartoDB Positron",  # Using dark tiles for dark mode
+        min_zoom=3,  # Prevent zooming out too far
+        max_zoom=10,  # Prevent zooming in too much
+    )
+
+    # Add a custom title to the map
+    folium.map.Marker(
+        [51.5, -0.09],
+        icon=folium.DivIcon(
+            icon_size=(150, 36),
+            icon_anchor=(0, 0),
+            html='<div style="font-size: 12pt; color: white; font-weight: bold;">Click on cities to select</div>',
+        ),
+    ).add_to(m)
 
     # Define marker colors based on selection
     def get_marker_color(city):
-        if city == st.session_state.recommended_city:
-            return "purple"  # Color for recommended city
-        elif city not in st.session_state.selected_cities:
-            return "blue"  # Default color for unselected cities
-
-        city_rank = st.session_state.selected_cities.index(city)
-        if city_rank < k:
-            return "green"  # Top-k cities
+        if city in st.session_state.more_of_cities:
+            return "green"  # Cities user wants more of
+        elif city in st.session_state.less_of_cities:
+            return "orange"  # Cities user wants less of
+        elif city == st.session_state.recommended_city:
+            return "purple"  # Recommended city
         else:
-            return "orange"  # Selected but not top-k
+            return "cadetblue"  # Default color for unselected cities
 
-    # Add markers for each city
+    # Define icon type based on selection
+    def get_icon_type(city):
+        if city in st.session_state.more_of_cities:
+            return "thumbs-up"
+        elif city in st.session_state.less_of_cities:
+            return "thumbs-down"
+        elif city == st.session_state.recommended_city:
+            return "star"
+        else:
+            return "info-sign"
+
+    # Add markers for each city with custom popups
     for city, coords in cities.items():
         color = get_marker_color(city)
-        icon_type = "info-sign"
+        icon_type = get_icon_type(city)
 
-        # Use a different icon for recommended city
-        if city == st.session_state.recommended_city:
-            icon_type = "star"
+        # Create a popup with more information about the city
+        popup_html = f"""
+        <div style="width: 200px; text-align: center;">
+            <h4 style="margin-bottom: 5px;">{city}</h4>
+            <div style="font-size: 0.9em; margin-bottom: 10px;">Click to select this city</div>
+        </div>
+        """
 
+        # Add the marker to the map
         Marker(
             location=coords,
             tooltip=city,
-            icon=folium.Icon(color=color, icon=icon_type),
+            icon=folium.Icon(color=color, icon=icon_type, prefix="fa"),
+            popup=folium.Popup(popup_html, max_width=300),
         ).add_to(m)
 
-    # Create two columns - one for the map and one for the selected cities
-    col1, col2 = st.columns([2, 2])
+    # Display the map and sidebar in columns
+    col1, col2 = st.columns([3, 1])
 
-    # Display the map in the first column
     with col1:
-        out = st_folium(m, height=600, width=800)
+        st.markdown("### 🗺️ Select Cities on the Map")
+        out = st_folium(m, height=600, width=None)
 
-        # Show a warning message when in recommendation state
-        if st.session_state.recommendation_shown:
-            st.warning(
-                "A recommendation has been made. Please use the Reset button to start again."
-            )
-
-    # Display selected cities in the second column
     with col2:
-        st.write("## Your Top Cities")
-        if not st.session_state.selected_cities:
-            st.write("You haven't selected any cities yet.")
+        st.markdown("### 📋 Your Selections")
+
+        # Debug mode toggle
+        st.session_state.debug_mode = st.checkbox(
+            "🛠️ Debug Mode", value=st.session_state.debug_mode
+        )
+
+        # More of cities with custom styling
+        st.markdown("#### 👍 Cities You Want More Of:")
+        if st.session_state.more_of_cities:
+            st.markdown('<div class="city-list">', unsafe_allow_html=True)
+            for city in st.session_state.more_of_cities:
+                st.markdown(f"- **{city}** 🌟")
+            st.markdown("</div>", unsafe_allow_html=True)
         else:
-            for i, city in enumerate(st.session_state.selected_cities):
-                # Color top-k cities differently
-                if i < k:
-                    st.markdown(
-                        f"<span style='color:green; font-weight:bold'>{i+1}. {city}</span>",
-                        unsafe_allow_html=True,
-                    )
-                else:
-                    st.markdown(
-                        f"<span style='color:orange'>{i+1}. {city}</span>",
-                        unsafe_allow_html=True,
-                    )
+            st.info("None selected yet")
 
-            # Add buttons for actions
-            col_rec, col_reset = st.columns(2)
+        # Less of cities with custom styling
+        st.markdown("#### 👎 Cities You Want Less Of:")
+        if st.session_state.less_of_cities:
+            st.markdown('<div class="city-list">', unsafe_allow_html=True)
+            for city in st.session_state.less_of_cities:
+                st.markdown(f"- **{city}** ⛔")
+            st.markdown("</div>", unsafe_allow_html=True)
+        else:
+            st.info("None selected yet")
 
-            # Add a get recommendation button (disabled if recommendation already shown)
-            with col_rec:
-                if st.button(
-                    "Get Recommendation", disabled=st.session_state.recommendation_shown
-                ):
-                    recommended_city, confidence, lime_explanation, distances = (
-                        recommend_city()
-                    )
-                    if recommended_city:
-                        st.session_state.recommended_city = recommended_city
-                        st.session_state.confidence = confidence
-                        st.session_state.lime_explanation = (
-                            lime_explanation  # Store the explanation
+        # Action buttons with custom styling
+        st.markdown('<div class="button-container">', unsafe_allow_html=True)
+        col1, col2 = st.columns(2)
+        with col1:
+            if st.button("🔄 Reset", use_container_width=True):
+                st.session_state.more_of_cities = []
+                st.session_state.less_of_cities = []
+                st.session_state.recommended_city = None
+                st.session_state.show_recommendation_details = False
+                st.session_state.recommendation_data = None
+                st.rerun()
+
+        with col2:
+            if st.button(
+                "🔍 Get Recommendation", type="primary", use_container_width=True
+            ):
+                if st.session_state.more_of_cities and st.session_state.less_of_cities:
+                    non_selected = [
+                        city
+                        for city in cities.keys()
+                        if city not in st.session_state.more_of_cities
+                        and city not in st.session_state.less_of_cities
+                    ]
+                    with st.spinner("Finding your perfect city match..."):
+                        recommendation_result = generate_recommendation(
+                            non_selected,
+                            st.session_state.more_of_cities,
+                            st.session_state.less_of_cities,
                         )
-                        st.session_state.distances = distances  # Store the distances
-                        st.session_state.recommendation_shown = True
+
+                    if recommendation_result:
+                        city, confidence, lime_explanation, distances = (
+                            recommendation_result
+                        )
+                        st.session_state.recommended_city = city
+                        st.session_state.recommendation_data = recommendation_result
+                        st.session_state.show_recommendation_details = True
                         st.rerun()
                     else:
-                        st.warning(
-                            "Not enough diverse selections to make a recommendation. Select both high and lower ranked cities."
-                        )
-
-            # Add a reset button
-            with col_reset:
-                if st.button("Reset Selections"):
-                    st.session_state.selected_cities = []
-                    st.session_state.recommended_city = None
-                    st.session_state.recommendation_shown = False
-                    st.rerun()
-
-            # Display recommendation if available
-            if st.session_state.recommended_city:
-                st.markdown("---")
-                st.markdown("## Our Recommendation")
-                st.markdown(
-                    f"<span style='color:purple; font-weight:bold; font-size:16px'>Based on your past behavior, we recommend the city {st.session_state.recommended_city} with {st.session_state.confidence}% certainty.</span>",
-                    unsafe_allow_html=True,
-                )
-                # Add the personalized travel recommendation
-                if (
-                    hasattr(st.session_state, "lime_explanation")
-                    and st.session_state.lime_explanation
-                    and hasattr(st.session_state, "distances")
-                    and st.session_state.distances
-                ):
-                    travel_recommendation = generate_travel_recommendation_prompt(
-                        st.session_state.recommended_city,
-                        st.session_state.selected_cities[:k],  # Top cities (green)
-                        st.session_state.selected_cities[k:],  # Bottom cities (orange)
-                        st.session_state.lime_explanation,
-                        st.session_state.distances,
-                    )
-
-                    st.markdown("### Travel Recommendation - Prompt")
-                    st.markdown(
-                        f"<div style='padding:15px; border-radius:5px;'><i>{travel_recommendation}</i></div>",
-                        unsafe_allow_html=True,
-                    )
-
-                # Display LIME explanation
-                st.markdown("### Explanation")
-                st.write("Factors influencing this recommendation:")
-
-                if (
-                    hasattr(st.session_state, "lime_explanation")
-                    and st.session_state.lime_explanation
-                ):
-                    # Create a bar chart for LIME explanation
-                    explanation_data = st.session_state.lime_explanation
-                    features = list(explanation_data.keys())
-                    values = list(explanation_data.values())
-
-                    if features and values:
-                        # Sort features by absolute importance
-                        sorted_features_values = sorted(
-                            zip(features, values), key=lambda x: abs(x[1]), reverse=True
-                        )
-                        sorted_features = [x[0] for x in sorted_features_values]
-                        # Top 5 features
-                        sorted_values = [x[1] for x in sorted_features_values]
-
-                        # Create color list based on positive/negative values
-                        colors = [
-                            "green" if value > 0 else "red" for value in sorted_values
-                        ]
-
-                        # Create readable feature names
-                        readable_features = [
-                            feat.replace("mean_top_", "Top: ")
-                            .replace("mean_bottom_", "Bottom: ")
-                            .replace("Distance", "")
-                            for feat in sorted_features
-                        ]
-
-                        fig = go.Figure()
-                        fig.add_trace(
-                            go.Bar(
-                                x=sorted_values,
-                                y=readable_features,
-                                orientation="h",
-                                marker_color=colors,
-                            )
-                        )
-
-                        fig.update_layout(
-                            title="Feature Importance",
-                            xaxis_title="Impact on Recommendation",
-                            yaxis_title="Features",
-                            height=600,
-                        )
-
-                        st.plotly_chart(fig)
-
-                        st.write("#### Interpreting the chart:")
-                        st.write(
-                            "- Green bars (positive values) contribute to recommending this city"
-                        )
-                        st.write(
-                            "- Red bars (negative values) count against this recommendation"
-                        )
-                        st.write(
-                            "- The larger the bar, the more influential that factor"
-                        )
+                        st.error("Unable to generate a recommendation.")
                 else:
-                    st.info(
-                        "No detailed explanation available for this recommendation."
+                    st.warning("Please select at least one city in each category.")
+        st.markdown("</div>", unsafe_allow_html=True)
+
+    # Display recommendation if available
+    if (
+        st.session_state.recommended_city
+        and st.session_state.show_recommendation_details
+        and st.session_state.recommendation_data
+    ):
+        confidence = st.session_state.recommendation_data[1]
+        lime_explanation = st.session_state.recommendation_data[2]
+        distances = st.session_state.recommendation_data[3]
+
+        # Generate travel recommendation prompt
+        travel_recommendation = generate_travel_recommendation_prompt(
+            st.session_state.recommended_city,
+            st.session_state.more_of_cities,
+            st.session_state.less_of_cities,
+            lime_explanation,
+            distances,
+        )
+        # Button to ask ChatGPT about the recommendation
+        encoded_prompt = urllib.parse.quote(travel_recommendation)
+        chatgpt_url = f"https://chat.openai.com/?prompt={encoded_prompt}"
+
+        st.markdown(
+            f"""
+            <div class="recommendation-box">
+                <h2>🎉 Your Recommended City</h2>
+                <h3 style="color: #7986CB; margin-top: 10px;">{st.session_state.recommended_city}</h3>
+                <p>Based on your preferences, we think you'll love {st.session_state.recommended_city}! We have {confidence}% of certainty!</p>
+                <a href="{chatgpt_url}" target="_blank">
+                        <button style="
+                            background-color: #10A37F; 
+                            color: white; 
+                            padding: 10px 20px; 
+                            border: none; 
+                            border-radius: 5px; 
+                            font-size: 16px;
+                            cursor: pointer;">
+                            💬 Ask ChatGPT to explain the recommendation
+                        </button>
+                </a>
+            </div>
+            """,
+            unsafe_allow_html=True,
+        )
+
+        # Debug mode content
+        if st.session_state.debug_mode:
+            st.markdown('<div class="debug-box">', unsafe_allow_html=True)
+            st.markdown("## 🔍 Debug Information")
+
+            st.markdown("### Travel Recommendation - Prompt")
+            st.markdown(
+                f"<div style='padding:15px; border-radius:5px; background-color: #263238;'><i>{travel_recommendation}</i></div>",
+                unsafe_allow_html=True,
+            )
+
+            # Display LIME explanation
+            st.markdown("### Explanation")
+            st.write("Factors influencing this recommendation:")
+
+            if lime_explanation:
+                # Create a bar chart for LIME explanation
+                features = list(lime_explanation.keys())
+                values = list(lime_explanation.values())
+
+                if features and values:
+                    # Sort features by absolute importance
+                    sorted_features_values = sorted(
+                        zip(features, values), key=lambda x: abs(x[1]), reverse=True
+                    )
+                    sorted_features = [x[0] for x in sorted_features_values]
+                    sorted_values = [x[1] for x in sorted_features_values]
+
+                    # Create color list based on positive/negative values
+                    colors = [
+                        "green" if value > 0 else "red" for value in sorted_values
+                    ]
+
+                    # Create readable feature names
+                    readable_features = [
+                        feat.replace("mean_top_", "Top: ")
+                        .replace("mean_bottom_", "Bottom: ")
+                        .replace("Distance", "")
+                        for feat in sorted_features
+                    ]
+
+                    fig = go.Figure()
+                    fig.add_trace(
+                        go.Bar(
+                            x=sorted_values,
+                            y=readable_features,
+                            orientation="h",
+                            marker_color=colors,
+                        )
                     )
 
-                # Print distances as dict
-                if (
-                    hasattr(st.session_state, "distances")
-                    and st.session_state.distances
-                ):
-                    st.markdown("### Distance Values")
-                    st.json(st.session_state.distances)
+                    fig.update_layout(
+                        title="Feature Importance",
+                        xaxis_title="Impact on Recommendation",
+                        yaxis_title="Features",
+                        height=400,
+                        template="plotly_dark",
+                        paper_bgcolor="#263238",
+                        plot_bgcolor="#263238",
+                        font=dict(color="#E0E0E0"),
+                    )
+
+                    st.plotly_chart(fig)
+
+                    st.write("#### Interpreting the chart:")
+                    st.write(
+                        "- Green bars (positive values) contribute to recommending this city"
+                    )
+                    st.write(
+                        "- Red bars (negative values) count against this recommendation"
+                    )
+                    st.write("- The larger the bar, the more influential that factor")
+            else:
+                st.info("No detailed explanation available for this recommendation.")
+
+            # Print distances as dict
+            if distances:
+                st.markdown("### Distance Values")
+                st.json(distances)
+
+            st.markdown("</div>", unsafe_allow_html=True)
 
     # Handle marker clicks
-    if (
-        out
-        and "last_object_clicked" in out
-        and out["last_object_clicked"]
-        and not st.session_state.recommendation_shown
-    ):
+    # Handle marker clicks
+    if out and "last_object_clicked" in out and out["last_object_clicked"]:
         clicked_coords = (
             out["last_object_clicked"]["lat"],
             out["last_object_clicked"]["lng"],
         )
 
-        needs_update = False
         # Find which city was clicked
         for city, coords in cities.items():
             if (
                 abs(coords[0] - clicked_coords[0]) < 0.01
                 and abs(coords[1] - clicked_coords[1]) < 0.01
             ):
-                # Add city if not already selected and limit to MAX_CITIES
-                if city not in st.session_state.selected_cities:
-                    if len(st.session_state.selected_cities) < MAX_CITIES:
-                        st.session_state.selected_cities.append(city)
-                        needs_update = True
-                    else:
-                        st.warning(
-                            f"You already selected {MAX_CITIES} cities! Use the reset button to start over."
-                        )
-                break
+                # Create a card-like UI for city selection
+                st.markdown(
+                    f"""
+                    <div class="city-selection-card">
+                        <h3 style="color: #7986CB;">🏙️ {city}</h3>
+                        <p>Would you like to see more or less of what {city} has to offer?</p>
+                    </div>
+                    """,
+                    unsafe_allow_html=True,
+                )
 
-        # Force rerun if we added a new city
-        if needs_update:
-            st.rerun()
+                # Check if we've reached the limit for either category
+                more_limit_reached = (
+                    len(st.session_state.more_of_cities) >= 3
+                    and city not in st.session_state.more_of_cities
+                )
+                less_limit_reached = (
+                    len(st.session_state.less_of_cities) >= 3
+                    and city not in st.session_state.less_of_cities
+                )
+
+                # Show warning if limit reached
+                if more_limit_reached:
+                    st.warning(
+                        "⚠️ You can select up to 3 cities in the 'More of' category. Please remove a city first."
+                    )
+
+                if less_limit_reached:
+                    st.warning(
+                        "⚠️ You can select up to 3 cities in the 'Less of' category. Please remove a city first."
+                    )
+
+                # Ask whether this is a "more of" or "less of" city
+                col1, col2 = st.columns(2)
+                with col1:
+                    more_button = st.button(
+                        f"👍 More of {city}",
+                        key="more",
+                        use_container_width=True,
+                        disabled=more_limit_reached,
+                    )
+                    if more_button:
+                        if city not in st.session_state.more_of_cities:
+                            st.session_state.more_of_cities.append(city)
+                        if city in st.session_state.less_of_cities:
+                            st.session_state.less_of_cities.remove(city)
+                        # Clear recommendation data when a new city is selected
+                        st.session_state.recommended_city = None
+                        st.session_state.show_recommendation_details = False
+                        st.session_state.recommendation_data = None
+                        st.rerun()
+
+                with col2:
+                    less_button = st.button(
+                        f"👎 Less of {city}",
+                        key="less",
+                        use_container_width=True,
+                        disabled=less_limit_reached,
+                    )
+                    if less_button:
+                        if city not in st.session_state.less_of_cities:
+                            st.session_state.less_of_cities.append(city)
+                        if city in st.session_state.more_of_cities:
+                            st.session_state.more_of_cities.remove(city)
+                        # Clear recommendation data when a new city is selected
+                        st.session_state.recommended_city = None
+                        st.session_state.show_recommendation_details = False
+                        st.session_state.recommendation_data = None
+                        st.rerun()
