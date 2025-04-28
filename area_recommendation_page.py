@@ -5,7 +5,8 @@ import random
 import folium
 from streamlit_folium import st_folium
 import json
-from helper import process_area_selections
+import urllib.parse
+from helper import process_area_selections, generate_area_recommendation_prompt
 
 
 def show():
@@ -51,6 +52,20 @@ def show():
             margin: 20px 0;
             color: #E0E0E0;
         }
+        .confidence-box {
+        padding: 10px;
+        border-radius: 5px;
+        margin-top: 10px;
+        color: #E0E0E0;
+        }
+        .debug-box {
+            background-color: #303F9F;
+            padding: 15px;
+            border-radius: 10px;
+            margin-top: 20px;
+            color: #E0E0E0;
+            border-left: 5px solid #FF9800;
+        }
         </style>
         <div class="title-container">
             <h1>🏙️ Area Recommendation</h1>
@@ -91,6 +106,16 @@ def show():
         st.session_state.la_less_of_areas = []
     if "show_miami" not in st.session_state:
         st.session_state.show_miami = False
+    if "debug_mode" not in st.session_state:
+        st.session_state.debug_mode = False
+    if "recommended_zipcode" not in st.session_state:
+        st.session_state.recommended_zipcode = None
+    if "confidence" not in st.session_state:
+        st.session_state.confidence = None
+    if "explanation" not in st.session_state:
+        st.session_state.explanation = None
+    if "distances" not in st.session_state:
+        st.session_state.distances = None
 
     # Load GeoJSON data
     with open("data/zipcodes_with_geometry.geojson", "r") as f:
@@ -181,6 +206,9 @@ def show():
         ny_map_data = st_folium(ny_map, width=900, height=600)
 
     with ny_col2:
+        st.session_state.debug_mode = st.checkbox(
+            "🛠️ Debug Mode", value=st.session_state.debug_mode
+        )
         st.markdown('<div class="city-list">', unsafe_allow_html=True)
         st.write("#### Selected in NY:")
 
@@ -281,7 +309,7 @@ def show():
     st.write("Click on neighborhoods to select areas you want more or less of")
 
     la_map = folium.Map(
-        location=[34.0522, -118.2437], zoom_start=10, tiles="CartoDB positron"
+        location=[34.0522, -118.2437], zoom_start=9, tiles="CartoDB positron"
     )
 
     # Add LA neighborhoods as polygon layers
@@ -448,120 +476,229 @@ def show():
     if has_ny_selections and has_la_selections:
         st.markdown("---")
 
-        if not st.session_state.show_miami:
-            st.markdown('<div class="button-container">', unsafe_allow_html=True)
-            if st.button(
-                "🔍 Get Recommendation", type="primary", use_container_width=True
-            ):
-                st.session_state.show_miami = True
+    if not st.session_state.show_miami:
+        st.markdown('<div class="button-container">', unsafe_allow_html=True)
+        if st.button("🔍 Get Recommendation", type="primary", use_container_width=True):
+            # Process selections to get recommendation
+            more_of_zipcodes = []
+            less_of_zipcodes = []
 
-                # Process selections to get recommendation
-                more_of_zipcodes = []
-                less_of_zipcodes = []
+            more_of_zipcodes.extend(st.session_state.ny_more_of_areas)
+            more_of_zipcodes.extend(st.session_state.la_more_of_areas)
+            less_of_zipcodes.extend(st.session_state.ny_less_of_areas)
+            less_of_zipcodes.extend(st.session_state.la_less_of_areas)
 
-                more_of_zipcodes.extend(st.session_state.ny_more_of_areas)
-                more_of_zipcodes.extend(st.session_state.la_more_of_areas)
-                less_of_zipcodes.extend(st.session_state.ny_less_of_areas)
-                less_of_zipcodes.extend(st.session_state.la_less_of_areas)
+            # Call helper function to process selections and store results
+            with st.spinner("Finding your perfect Miami neighborhood..."):
+                recommendation_result = process_area_selections(
+                    more_of_zipcodes, less_of_zipcodes
+                )
 
-                # Call helper function to process selections
-                process_area_selections(more_of_zipcodes, less_of_zipcodes)
+                if recommendation_result:
+                    recommended_zip, confidence, explanation, distances = (
+                        recommendation_result
+                    )
+                    # Store in session state
+                    st.session_state.recommended_zipcode = recommended_zip
+                    st.session_state.confidence = confidence
+                    st.session_state.explanation = explanation
+                    st.session_state.distances = distances
+                    st.session_state.show_miami = True
+                    st.rerun()
+                else:
+                    st.error("Unable to generate a recommendation.")
 
-                st.rerun()
+    if st.session_state.show_miami and st.session_state.recommended_zipcode:
+        recommended_zip = st.session_state.recommended_zipcode
+        confidence = st.session_state.confidence
+        explanation = st.session_state.explanation
+        distances = st.session_state.distances
 
-        # Show Miami recommendation if all conditions are met
-        if st.session_state.show_miami:
+        # Generate recommendation prompt
+        area_recommendation = generate_area_recommendation_prompt(
+            recommended_zip,
+            st.session_state.ny_more_of_areas + st.session_state.la_more_of_areas,
+            st.session_state.ny_less_of_areas + st.session_state.la_less_of_areas,
+            explanation,
+            distances,
+        )
+
+        # Add a title and description to the Miami recommendation section
+        st.markdown("---")
+        st.markdown("### Step 3: Your Miami Neighborhood Recommendation")
+        st.write(
+            "Based on your preferences from New York and Los Angeles, we've found the perfect Miami area for you!"
+        )
+
+        # Create Miami map with recommended area
+        miami_map = folium.Map(
+            location=[25.7617, -80.1918], zoom_start=9, tiles="CartoDB positron"
+        )
+
+        # Add Miami neighborhoods as polygon layers
+        for zipcode_feature in miami_zipcodes:
+            zipcode_id = zipcode_feature["properties"]["zipcode_id"]
+            description = f"Zipcode {zipcode_id}: A beautiful neighborhood in Miami with its own unique character."
+
+            # Make the recommended area purple
+            if zipcode_id == recommended_zip:
+                style = {
+                    "fillColor": "purple",  # Purple for recommendation
+                    "color": "#BA68C8",
+                    "weight": 2,
+                    "fillOpacity": 0.7,
+                }
+                icon = "star"
+            else:
+                style = {
+                    "fillColor": "blue",  # Blue for other areas
+                    "color": "#64B5F6",
+                    "weight": 1,
+                    "fillOpacity": 0.5,
+                }
+                icon = "info-sign"
+
+            # Add GeoJSON polygon with popup
+            popup_html = f"<b>{zipcode_id}</b><br>{description}"
+
+            folium.GeoJson(
+                zipcode_feature,
+                name=zipcode_id,
+                style_function=lambda x, style=style: style,
+                tooltip=zipcode_id,
+                popup=folium.Popup(popup_html, max_width=300),
+            ).add_to(miami_map)
+
+            # Add a marker at the centroid for better visibility
+            lat = zipcode_feature["properties"]["latitude"]
+            lng = zipcode_feature["properties"]["longitude"]
+            folium.Marker(
+                location=[lat, lng],
+                tooltip=zipcode_id,
+                icon=folium.Icon(
+                    color=style["fillColor"].replace("#", ""),
+                    icon=icon,
+                    prefix="fa",
+                ),
+            ).add_to(miami_map)
+
+        # Display Miami map
+        st_folium(miami_map, width=900, height=600)
+
+        # Button to ask ChatGPT about the recommendation
+        encoded_prompt = urllib.parse.quote(area_recommendation)
+        chatgpt_url = f"https://chat.openai.com/?prompt={encoded_prompt}"
+
+        st.markdown(
+            f"""
+            <div class="recommendation-box">
+                <h2>🎉 Your Recommended Miami Area</h2>
+                <h3 style="color: #7986CB; margin-top: 10px;">Miami {recommended_zip}</h3>
+                <p>Based on your preferences, we think you'll love this Miami neighborhood! We have {confidence}% of certainty!</p>
+                <a href="{chatgpt_url}" target="_blank">
+                    <button style="
+                        background-color: #10A37F; 
+                        color: white; 
+                        padding: 10px 20px; 
+                        border: none; 
+                        border-radius: 5px; 
+                        font-size: 16px;
+                        cursor: pointer;">
+                        💬 Ask ChatGPT to explain the recommendation
+                    </button>
+                </a>
+            </div>
+            """,
+            unsafe_allow_html=True,
+        )
+
+        # Add Start Over button at the end
+        if st.button("🔄 Start Over", use_container_width=True):
+            st.session_state.ny_more_of_areas = []
+            st.session_state.ny_less_of_areas = []
+            st.session_state.la_more_of_areas = []
+            st.session_state.la_less_of_areas = []
+            st.session_state.show_miami = False
+            st.session_state.recommended_zipcode = None
+            st.session_state.confidence = None
+            st.session_state.explanation = None
+            st.session_state.distances = None
+            st.rerun()
+
+        # Debug mode content
+        if st.session_state.debug_mode:
+            st.markdown('<div class="debug-box">', unsafe_allow_html=True)
+            st.markdown("## 🔍 Debug Information")
+
+            st.markdown("### Area Recommendation - Prompt")
             st.markdown(
-                """
-                <div class="recommendation-box">
-                    <h2>🎉 Your Recommended Miami Area</h2>
-                    <p>Based on your preferences, we've found the perfect neighborhood for you in Miami.</p>
-                </div>
-                """,
+                f"<div style='padding:15px; border-radius:5px; background-color: #263238;'><i>{area_recommendation}</i></div>",
                 unsafe_allow_html=True,
             )
 
-            # Create Miami map
-            miami_map = folium.Map(
-                location=[25.7617, -80.1918], zoom_start=10, tiles="CartoDB positron"
-            )
+            # Display explanation
+            st.markdown("### Explanation")
+            st.write("Factors influencing this recommendation:")
 
-            # Highlight recommended area based on user preferences
-            recommended_area = (
-                "33139"  # You can make this dynamic based on user preferences
-            )
+            if explanation:
+                # Create a bar chart for feature importance
+                importance_data = {"Feature": [], "Importance": []}
+                for feat, value in list(explanation.items())[
+                    :10
+                ]:  # Show top 10 features
+                    importance_data["Feature"].append(feat)
+                    importance_data["Importance"].append(value)
 
-            # Add Miami neighborhoods as polygon layers
-            for zipcode_feature in miami_zipcodes:
-                zipcode_id = zipcode_feature["properties"]["zipcode_id"]
-                description = f"Zipcode {zipcode_id}: A beautiful neighborhood in Miami with its own unique character."
+                importance_df = pd.DataFrame(importance_data)
 
-                # Make the recommended area purple
-                if zipcode_id == recommended_area:
-                    style = {
-                        "fillColor": "#9C27B0",  # Purple
-                        "color": "#BA68C8",
-                        "weight": 2,
-                        "fillOpacity": 0.7,
-                    }
-                    icon = "star"
-                else:
-                    style = {
-                        "fillColor": "#2196F3",  # Blue
-                        "color": "#64B5F6",
-                        "weight": 1,
-                        "fillOpacity": 0.5,
-                    }
-                    icon = "info-sign"
+                # Determine colors based on values
+                colors = [
+                    "green" if value > 0 else "red"
+                    for value in importance_df["Importance"]
+                ]
 
-                # Add GeoJSON polygon with popup
-                popup_html = f"<b>{zipcode_id}</b><br>{description}"
+                # Create readable feature names
+                importance_df["Feature"] = (
+                    importance_df["Feature"]
+                    .str.replace("mean_top_", "More: ")
+                    .str.replace("mean_bottom_", "Less: ")
+                    .str.replace("Distance", "")
+                )
 
-                folium.GeoJson(
-                    zipcode_feature,
-                    name=zipcode_id,
-                    style_function=lambda x, style=style: style,
-                    tooltip=zipcode_id,
-                    popup=folium.Popup(popup_html, max_width=300),
-                ).add_to(miami_map)
+                # Horizontal bar chart
+                fig = px.bar(
+                    importance_df,
+                    x="Importance",
+                    y="Feature",
+                    orientation="h",
+                    color="Importance",
+                    color_continuous_scale=["#FF9800", "#4CAF50"],
+                    title="Feature Importance for Recommendation",
+                )
+                fig.update_layout(
+                    height=400,
+                    width=700,
+                    template="plotly_dark",
+                    paper_bgcolor="#263238",
+                    plot_bgcolor="#263238",
+                    font=dict(color="#E0E0E0"),
+                )
+                st.plotly_chart(fig)
 
-                # Add a marker at the centroid for better visibility
-                lat = zipcode_feature["properties"]["latitude"]
-                lng = zipcode_feature["properties"]["longitude"]
-                folium.Marker(
-                    location=[lat, lng],
-                    tooltip=zipcode_id,
-                    icon=folium.Icon(
-                        color=style["fillColor"].replace("#", ""),
-                        icon=icon,
-                        prefix="fa",
-                    ),
-                ).add_to(miami_map)
+                st.write("#### Interpreting the chart:")
+                st.write(
+                    "- Green bars (positive values) contribute to recommending this neighborhood"
+                )
+                st.write(
+                    "- Red bars (negative values) count against this recommendation"
+                )
+                st.write("- The larger the bar, the more influential that factor")
+            else:
+                st.info("No detailed explanation available for this recommendation.")
 
-            # Display Miami map
-            st_folium(miami_map, width=900, height=600)
+            # Print distances as dict
+            if distances:
+                st.markdown("### Distance Values")
+                st.json(distances)
 
-            # Show recommendation details
-            st.markdown(
-                f"### We recommend: **Miami Beach (Zipcode {recommended_area})**"
-            )
-            st.write(
-                f"**Why?** This vibrant Miami neighborhood features stunning beaches, art deco architecture, and a lively cultural scene."
-            )
-
-            st.write(
-                """
-            Based on your preferences from New York and Los Angeles, we think you'll enjoy the 
-            artistic atmosphere and urban energy of Miami Beach, with its unique blend of cultural 
-            attractions and vibrant street life.
-            """
-            )
-
-            # Reset button
-            if st.button("🔄 Start Over", use_container_width=True):
-                st.session_state.ny_more_of_areas = []
-                st.session_state.ny_less_of_areas = []
-                st.session_state.la_more_of_areas = []
-                st.session_state.la_less_of_areas = []
-                st.session_state.show_miami = False
-                st.rerun()
+            st.markdown("</div>", unsafe_allow_html=True)

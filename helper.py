@@ -4,6 +4,7 @@ import lightgbm as lgb
 import numpy as np
 import lime
 from lime.lime_tabular import LimeTabularExplainer
+import pandas as pd
 
 
 def get_city_coordinates_data():
@@ -130,12 +131,6 @@ def generate_recommendation(non_selected_cities, top_cities, bottom_cities):
             [f"mean_top_{feat}" for feat in features]
             + [f"mean_bottom_{feat}" for feat in features]
         ]
-
-        # Skip cities with missing data
-        # if X.isna().any().any():
-        #     print(X)
-        #     print(f"skipped city because of missing data in X: {city}")
-        #     continue
 
         predictions = booster.predict(X)
 
@@ -425,19 +420,331 @@ Output Template:
 def process_area_selections(more_of_zipcodes, less_of_zipcodes):
     """
     Process the user's zipcode selections to recommend a Miami area.
-
-    Args:
-        more_of_zipcodes: List of zipcodes the user likes more (favorites)
-        less_of_zipcodes: List of zipcodes the user likes less (ok areas)
-
-    Returns:
-        String: The recommended Miami zipcode based on user preferences
     """
-    # This is a placeholder function that will be implemented in the future
-    # It should use the similar_zipcode_pairs.csv data to find matches
-
     print(f"User likes more of: {more_of_zipcodes}")
     print(f"User likes less of: {less_of_zipcodes}")
 
-    # For now, return a default recommendation
-    return "33139"  # Miami Beach
+    # Convert zipcode strings to integers
+    more_of_zipcodes_int = [int(z) for z in more_of_zipcodes]
+    less_of_zipcodes_int = [int(z) for z in less_of_zipcodes]
+
+    if not more_of_zipcodes and not less_of_zipcodes:
+        print("No zipcode selections provided")
+        return (
+            "33139",
+            75,
+            {"random_recommendation": 1.0},
+            {"notice": "Insufficient data for detailed analysis"},
+        )
+
+    # Load the zipcode pairs data
+    pairs_df = pl.read_csv("data/similar_zipcode_pairs.csv")
+
+    # Load the saved model (use zipcode specific model if available)
+    try:
+        booster = lgb.Booster(model_file="data/lgbm_zipcodes_model.txt")
+    except:
+        # Fallback to city model if zipcode model not available
+        booster = lgb.Booster(model_file="data/lgbm_cbsa_k3_model.txt")
+
+    # Get all unique Miami zipcodes for recommendations
+    miami_zipcodes = (
+        pairs_df.filter(
+            pl.col("city1_name").eq("Miami") | pl.col("city2_name").eq("Miami")
+        )
+        .select(
+            pl.when(pl.col("city1_name").eq("Miami"))
+            .then(pl.col("zipcode1"))
+            .otherwise(pl.col("zipcode2"))
+            .unique()
+            .alias("miami_zipcode")
+        )
+        .to_series()
+        .to_list()
+    )
+
+    # Filter out any selected Miami zipcodes from recommendations
+    miami_zipcodes = [
+        z
+        for z in miami_zipcodes
+        if z not in more_of_zipcodes_int and z not in less_of_zipcodes_int
+    ]
+
+    if not miami_zipcodes:
+        print("No available Miami zipcodes for recommendation")
+        return (
+            "33139",
+            75,
+            {"random_recommendation": 1.0},
+            {"notice": "All Miami zipcodes already selected"},
+        )
+
+    # Define features to use for similarity
+    features = [
+        "scenesDistance",
+        "frequencyCosine",
+        "geographicDistance",
+        "populationDistance",
+        "bachelorDistance",
+        "raceDistance",
+        "incomeDistance",
+        "employmentDistance",
+        "votingDistance",
+    ]
+
+    # Calculate scores for each potential Miami zipcode
+    zipcode_scores = {}
+    zipcode_distances = {}
+
+    for miami_zip in miami_zipcodes:
+        # Get pairs between this Miami zipcode and selected zipcodes
+        miami_pairs = pairs_df.filter(
+            (
+                # Get pairs where either end is this Miami zipcode
+                (pl.col("city1_name").eq("Miami") & pl.col("zipcode1").eq(miami_zip))
+                | (pl.col("city2_name").eq("Miami") & pl.col("zipcode2").eq(miami_zip))
+            )
+            & (
+                # And the other end is in our selected zipcodes
+                (
+                    pl.col("zipcode1").is_in(
+                        more_of_zipcodes_int + less_of_zipcodes_int
+                    )
+                    | pl.col("zipcode2").is_in(
+                        more_of_zipcodes_int + less_of_zipcodes_int
+                    )
+                )
+            )
+        )
+
+        # Simplify the transformation to just identify which zipcode is from the "other" city
+        miami_pairs = miami_pairs.with_columns(
+            [
+                # For each pair, get the non-Miami zipcode
+                pl.when(pl.col("city1_name").eq("Miami"))
+                .then(pl.col("zipcode2"))
+                .otherwise(pl.col("zipcode1"))
+                .alias("other_zipcode"),
+                # For each pair, get the non-Miami zipcode
+                pl.when(pl.col("city1_name").eq("Miami"))
+                .then(pl.col("zipcode1"))
+                .otherwise(pl.col("zipcode2"))
+                .alias("selected_zipcode"),
+            ],
+        )
+
+        # Now separate into more_of and less_of pairs - much simpler now
+        more_of_pairs = miami_pairs.filter(
+            pl.col("other_zipcode").is_in(more_of_zipcodes_int)
+        )
+
+        less_of_pairs = miami_pairs.filter(
+            pl.col("other_zipcode").is_in(less_of_zipcodes_int)
+        )
+
+        # Skip if no comparison data
+        if len(more_of_pairs) == 0 and len(less_of_pairs) == 0:
+            print(f"No relevant comparison data for Miami zipcode {miami_zip}")
+            continue
+
+        top_distances = more_of_pairs.group_by(["selected_zipcode"]).agg(
+            [
+                pl.col(feat).drop_nans().drop_nulls().mean().alias(f"mean_top_{feat}")
+                for feat in features
+            ]
+        )
+        bottom_distances = less_of_pairs.group_by(["selected_zipcode"]).agg(
+            [
+                pl.col(feat)
+                .drop_nans()
+                .drop_nulls()
+                .mean()
+                .alias(f"mean_bottom_{feat}")
+                for feat in features
+            ]
+        )
+
+        joined_distances = top_distances.join(
+            bottom_distances,
+            on=["selected_zipcode"],
+            how="full",
+            suffix="_bottom",
+        )
+
+        df = joined_distances.to_pandas()
+
+        # Skip if empty dataframe
+        if df.empty:
+            print(f"Empty dataframe for Miami zipcode {miami_zip}")
+            continue
+
+        X = df[
+            [f"mean_top_{feat}" for feat in features]
+            + [f"mean_bottom_{feat}" for feat in features]
+        ]
+
+        predictions = booster.predict(X)
+
+        # Create fallback simple explanation if LIME fails
+        feature_importance = {}
+
+        try:
+            # Add LIME explanation
+            feature_names = list(X.columns)
+            explanation = explain_prediction_with_lime(booster, X, feature_names)
+
+            # Store the explanation results and sort them by absolute value
+            feature_importance_list = explanation.as_list()
+            # Sort by absolute magnitude of feature importance
+            sorted_importance = sorted(
+                feature_importance_list, key=lambda x: abs(x[1]), reverse=True
+            )
+
+            # Store as ordered dictionary
+            feature_importance = {feat: value for feat, value in sorted_importance}
+        except Exception as e:
+            print(f"LIME explanation failed for {miami_zip}: {e}")
+            # Create a fallback simplified explanation using the raw feature values
+            for feat in features:
+                top_key = f"mean_top_{feat}"
+                bottom_key = f"mean_bottom_{feat}"
+                if top_key in df.columns and bottom_key in df.columns:
+                    feature_importance[top_key] = float(df[top_key].iloc[0])
+                    feature_importance[bottom_key] = float(df[bottom_key].iloc[0])
+
+        # Store the raw distance values for this zipcode
+        raw_distances = {}
+        for feat in features:
+            if f"mean_top_{feat}" in df.columns:
+                raw_distances[f"top_{feat}"] = float(df[f"mean_top_{feat}"].iloc[0])
+            if f"mean_bottom_{feat}" in df.columns:
+                raw_distances[f"bottom_{feat}"] = float(
+                    df[f"mean_bottom_{feat}"].iloc[0]
+                )
+
+        zipcode_distances[miami_zip] = raw_distances
+
+        # Store zipcode score and explanation
+        zipcode_scores[miami_zip] = {
+            "score": float(predictions[0]),
+            "explanation": feature_importance,
+        }
+
+    # If no zipcodes were scored, return random recommendation with simple explanation
+    if not zipcode_scores:
+        print("No Miami zipcodes could be scored")
+        return (
+            "33139",
+            75,
+            {"random_recommendation": 1.0},
+            {"notice": "Insufficient data for detailed analysis"},
+        )
+
+    # Find zipcode with highest score
+    recommended_zip = max(
+        zipcode_scores.keys(), key=lambda z: zipcode_scores[z]["score"]
+    )
+
+    score = zipcode_scores[recommended_zip]["score"]
+    confidence = int(score * 100)
+
+    # Prepare explanation for display
+    explanation_dict = zipcode_scores[recommended_zip]["explanation"]
+
+    # Sort explanation by importance
+    sorted_explanation = dict(
+        sorted(explanation_dict.items(), key=lambda x: abs(x[1]), reverse=True)
+    )
+
+    print(score, recommended_zip)
+
+    return (
+        str(recommended_zip),
+        confidence,
+        sorted_explanation,
+        zipcode_distances[recommended_zip],
+    )
+
+
+def generate_area_recommendation_prompt(
+    recommended_zipcode, more_of_zipcodes, less_of_zipcodes, explanation, distances
+):
+    """
+    Generate a personalized area recommendation prompt for an LLM system.
+
+    Args:
+        recommended_zipcode (str): The recommended Miami zipcode
+        more_of_zipcodes (list): List of zipcodes the user likes more
+        less_of_zipcodes (list): List of zipcodes the user likes less
+        explanation (dict): Explanation with feature importance values
+        distances (dict): Raw distance values between zipcodes
+
+    Returns:
+        str: A formatted LLM prompt for generating area recommendations
+    """
+    if not explanation or not distances:
+        return f"Based on your preferences, Miami zipcode {recommended_zipcode} seems like a great match for your preferences!"
+
+    # Feature name translation dictionary
+    feature_translations = {
+        "scenesDistance": "urban atmosphere",
+        "frequencyCosine": "venue mix and attractions",
+        "geographicDistance": "neighborhood layout",
+        "populationDistance": "population density and feel",
+        "bachelorDistance": "educational character",
+        "raceDistance": "cultural diversity",
+        "incomeDistance": "economic profile",
+        "employmentDistance": "professional opportunities",
+        "votingDistance": "community values",
+    }
+
+    # Format zipcode lists for the prompt
+    more_of_str = ", ".join(more_of_zipcodes) if more_of_zipcodes else "None provided"
+    less_of_str = ", ".join(less_of_zipcodes) if less_of_zipcodes else "None provided"
+
+    # Format the explanations and distances for readability
+    explanations_formatted = "\n".join(
+        [f"    {k}: {v}" for k, v in explanation.items()]
+    )
+
+    # Format distances dictionary
+    distances_formatted = "\n".join([f"    {k}: {v}" for k, v in distances.items()])
+
+    # Create the prompt template
+    prompt = f"""
+Task: Write a 3-4 sentence neighborhood recommendation for Miami zipcode {recommended_zipcode} based on the user's preferences from New York and Los Angeles. Explain why this Miami area matches their preferences and what they'll love about it.
+
+Input Data:
+
+    More Of Zipcodes (Preferred): {more_of_str} → The user enjoys these neighborhood characteristics.
+
+    Less Of Zipcodes (Less Preferred): {less_of_str} → The user wants to avoid these neighborhood characteristics.
+
+    Explanation Scores (Higher values = better match):
+    {explanations_formatted}
+
+    Raw Distance Values (Lower = more similar):
+    {distances_formatted}
+
+Instructions:
+
+    Focus on Neighborhood Character: Highlight how this Miami area captures the essence of neighborhoods the user likes (using more_of_zipcodes) while avoiding aspects they don't (from less_of_zipcodes).
+    
+    Translate Technical Terms: Use these friendly translations for metrics:
+        scenesDistance → "urban atmosphere & street vibe"
+        frequencyCosine → "local businesses & amenities"
+        populationDistance → "neighborhood density & energy"
+        raceDistance → "cultural character"
+        incomeDistance → "local economy"
+        
+    Compare Directly: Use phrases like "Similar to New York's 10001, you'll find..." or "Unlike LA's 90210, this area offers..."
+    
+    Be Specific: Mention actual characteristics of the recommended area (local cafes, walkability, nightlife, etc.)
+    
+    End with Enthusiasm: Finish with a compelling reason why they'll love living/visiting there
+
+Output Template:
+"Miami's {recommended_zipcode} neighborhood captures everything you love about {more_of_zipcodes[0] if more_of_zipcodes else 'your preferred areas'} with its [specific characteristic]. You'll appreciate the [feature] that resembles [specific NY/LA area], while avoiding the [less desirable trait] found in {less_of_zipcodes[0] if less_of_zipcodes else 'areas you liked less'}. This vibrant area offers [unique Miami benefit] that makes it perfect for [activity/lifestyle]."
+"""
+
+    return prompt
