@@ -5,7 +5,7 @@ import home_page
 import area_recommendation_page
 
 # Set page to wide mode
-st.set_page_config(layout="wide", page_title="City Recommendation App", page_icon="🏙️")
+st.set_page_config(layout="wide", page_title="From Cities To Streets", page_icon="🏙️")
 
 # Create a horizontal menu
 selected = option_menu(

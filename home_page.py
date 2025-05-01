@@ -2,7 +2,7 @@ import streamlit as st
 
 
 def show():
-    st.title("Travel Destination Recommender")
+    st.title("From Cities To Streets Demo")
 
     col1, col2 = st.columns([1, 1])
 
