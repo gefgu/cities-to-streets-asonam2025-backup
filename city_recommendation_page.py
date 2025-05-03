@@ -165,10 +165,21 @@ def show():
         icon_type = get_icon_type(city)
 
         # Create a popup with more information about the city
+        selection_status = ""
+        if city in st.session_state.more_of_cities:
+            selection_status = "<span style='color: #4CAF50; font-weight: bold;'>✓ Selected as \"More of this\"</span>"
+        elif city in st.session_state.less_of_cities:
+            selection_status = "<span style='color: #FF9800; font-weight: bold;'>✓ Selected as \"Less of this\"</span>"
+        elif city == st.session_state.recommended_city:
+            selection_status = "<span style='color: #9C27B0; font-weight: bold;'>★ Recommended City</span>"
+
         popup_html = f"""
-        <div style="width: 200px; text-align: center;">
+        <div style="width: 220px; text-align: center;">
+            {f' <div style="font-size: 0.9em; margin-bottom: 10px;">{selection_status}</div>' if selection_status else ''}
             <h4 style="margin-bottom: 5px;">{city}</h4>
-            <div style="font-size: 0.9em; margin-bottom: 10px;">Click to select this city</div>
+            <div style="font-size: 1.1em; color: 'black'; margin-top: 10px;">
+                <p>You can mark if you want more or less of what {city} offers in your ideal location below.</p>
+            </div>
         </div>
         """
 
@@ -181,11 +192,18 @@ def show():
         ).add_to(m)
 
     # Display the map and sidebar in columns
-    col1, col2 = st.columns([3, 1])
+    col1, col2 = st.columns([2, 1])
+
+    # Add a container for city selection that will appear above the map
+    selection_container = st.container()
 
     with col1:
+
+        with selection_container:
+            pass
+
         st.markdown("### 🗺️ Select Cities on the Map")
-        out = st_folium(m, height=600, width=None)
+        out = st_folium(m, height=450, width=None)
 
     with col2:
         st.markdown("### 📋 Your Selections")
@@ -401,72 +419,73 @@ def show():
                 abs(coords[0] - clicked_coords[0]) < 0.01
                 and abs(coords[1] - clicked_coords[1]) < 0.01
             ):
-                # Create a card-like UI for city selection
-                st.markdown(
-                    f"""
-                    <div class="city-selection-card">
-                        <h3 style="color: #7986CB;">🏙️ {city}</h3>
-                        <p>Would you like to see more or less of what {city} has to offer?</p>
-                    </div>
-                    """,
-                    unsafe_allow_html=True,
-                )
-
-                # Check if we've reached the limit for either category
-                more_limit_reached = (
-                    len(st.session_state.more_of_cities) >= 3
-                    and city not in st.session_state.more_of_cities
-                )
-                less_limit_reached = (
-                    len(st.session_state.less_of_cities) >= 3
-                    and city not in st.session_state.less_of_cities
-                )
-
-                # Show warning if limit reached
-                if more_limit_reached:
-                    st.warning(
-                        "⚠️ You can select up to 3 cities in the 'More of' category. Please remove a city first."
+                with selection_container:
+                    # Create a card-like UI for city selection
+                    st.markdown(
+                        f"""
+                        <div class="city-selection-card">
+                            <h3 style="color: #7986CB;">🏙️ {city}</h3>
+                            <p>Would you like to see more or less of what {city} has to offer?</p>
+                        </div>
+                        """,
+                        unsafe_allow_html=True,
                     )
 
-                if less_limit_reached:
-                    st.warning(
-                        "⚠️ You can select up to 3 cities in the 'Less of' category. Please remove a city first."
+                    # Check if we've reached the limit for either category
+                    more_limit_reached = (
+                        len(st.session_state.more_of_cities) >= 3
+                        and city not in st.session_state.more_of_cities
+                    )
+                    less_limit_reached = (
+                        len(st.session_state.less_of_cities) >= 3
+                        and city not in st.session_state.less_of_cities
                     )
 
-                # Ask whether this is a "more of" or "less of" city
-                col1, col2 = st.columns(2)
-                with col1:
-                    more_button = st.button(
-                        f"👍 More of {city}",
-                        key="more",
-                        use_container_width=True,
-                        disabled=more_limit_reached,
-                    )
-                    if more_button:
-                        if city not in st.session_state.more_of_cities:
-                            st.session_state.more_of_cities.append(city)
-                        if city in st.session_state.less_of_cities:
-                            st.session_state.less_of_cities.remove(city)
-                        # Clear recommendation data when a new city is selected
-                        st.session_state.recommended_city = None
-                        st.session_state.show_recommendation_details = False
-                        st.session_state.recommendation_data = None
-                        st.rerun()
+                    # Show warning if limit reached
+                    if more_limit_reached:
+                        st.warning(
+                            "⚠️ You can select up to 3 cities in the 'More of' category. Please remove a city first."
+                        )
 
-                with col2:
-                    less_button = st.button(
-                        f"👎 Less of {city}",
-                        key="less",
-                        use_container_width=True,
-                        disabled=less_limit_reached,
-                    )
-                    if less_button:
-                        if city not in st.session_state.less_of_cities:
-                            st.session_state.less_of_cities.append(city)
-                        if city in st.session_state.more_of_cities:
-                            st.session_state.more_of_cities.remove(city)
-                        # Clear recommendation data when a new city is selected
-                        st.session_state.recommended_city = None
-                        st.session_state.show_recommendation_details = False
-                        st.session_state.recommendation_data = None
-                        st.rerun()
+                    if less_limit_reached:
+                        st.warning(
+                            "⚠️ You can select up to 3 cities in the 'Less of' category. Please remove a city first."
+                        )
+
+                    # Ask whether this is a "more of" or "less of" city
+                    col1, col2 = st.columns(2)
+                    with col1:
+                        more_button = st.button(
+                            f"👍 More of {city}",
+                            key="more",
+                            use_container_width=True,
+                            disabled=more_limit_reached,
+                        )
+                        if more_button:
+                            if city not in st.session_state.more_of_cities:
+                                st.session_state.more_of_cities.append(city)
+                            if city in st.session_state.less_of_cities:
+                                st.session_state.less_of_cities.remove(city)
+                            # Clear recommendation data when a new city is selected
+                            st.session_state.recommended_city = None
+                            st.session_state.show_recommendation_details = False
+                            st.session_state.recommendation_data = None
+                            st.rerun()
+
+                    with col2:
+                        less_button = st.button(
+                            f"👎 Less of {city}",
+                            key="less",
+                            use_container_width=True,
+                            disabled=less_limit_reached,
+                        )
+                        if less_button:
+                            if city not in st.session_state.less_of_cities:
+                                st.session_state.less_of_cities.append(city)
+                            if city in st.session_state.more_of_cities:
+                                st.session_state.more_of_cities.remove(city)
+                            # Clear recommendation data when a new city is selected
+                            st.session_state.recommended_city = None
+                            st.session_state.show_recommendation_details = False
+                            st.session_state.recommendation_data = None
+                            st.rerun()
