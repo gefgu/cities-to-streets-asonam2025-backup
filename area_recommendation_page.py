@@ -155,30 +155,42 @@ def show():
         if zipcode_id in st.session_state.ny_more_of_areas:
             style = {
                 "fillColor": "#4CAF50",  # Green
-                "color": "#81C784",
+                "color": "#2E7D32",  # Darker green border
                 "weight": 2,
                 "fillOpacity": 0.7,
             }
             icon = "thumbs-up"
+            selection_status = "<span style='color: #4CAF50; font-weight: bold;'>✓ Selected as \"More of this\"</span>"
         elif zipcode_id in st.session_state.ny_less_of_areas:
             style = {
                 "fillColor": "#FF9800",  # Orange
-                "color": "#FFB74D",
+                "color": "#E65100",  # Darker orange border
                 "weight": 2,
                 "fillOpacity": 0.7,
             }
             icon = "thumbs-down"
+            selection_status = "<span style='color: #FF9800; font-weight: bold;'>✓ Selected as \"Less of this\"</span>"
         else:
             style = {
                 "fillColor": "#2196F3",  # Blue
-                "color": "#64B5F6",
+                "color": "#0D47A1",  # Darker blue border
                 "weight": 1,
                 "fillOpacity": 0.5,
             }
             icon = "info-sign"
+            selection_status = ""
 
-        # Add GeoJSON polygon with popup
-        popup_html = f"<b>{zipcode_id}</b><br>{description}"
+        # Add GeoJSON polygon with popup using similar style as city recommendation page
+        popup_html = f"""
+        <div style="width: 220px; text-align: center;">
+            {f' <div style="font-size: 0.9em; margin-bottom: 10px;">{selection_status}</div>' if selection_status else ''}
+            <h4 style="margin-bottom: 5px;">Zipcode {zipcode_id}</h4>
+            <div style="font-size: 1.1em; color: 'black'; margin-top: 10px;">
+                <p>{description}</p>
+                <p>You can mark if you want more or less of what this area offers below.</p>
+            </div>
+        </div>
+        """
 
         folium.GeoJson(
             zipcode_feature,
@@ -197,6 +209,7 @@ def show():
             icon=folium.Icon(
                 color=style["fillColor"].replace("#", ""), icon=icon, prefix="fa"
             ),
+            popup=folium.Popup(popup_html, max_width=300),
         ).add_to(ny_map)
 
     # Display New York map
@@ -476,7 +489,7 @@ def show():
     if has_ny_selections and has_la_selections:
         st.markdown("---")
 
-    if not st.session_state.show_miami:
+    if (has_ny_selections or has_la_selections) and not st.session_state.show_miami:
         st.markdown('<div class="button-container">', unsafe_allow_html=True)
         if st.button("🔍 Get Recommendation", type="primary", use_container_width=True):
             # Process selections to get recommendation
