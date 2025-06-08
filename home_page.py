@@ -13,6 +13,8 @@ def show():
         
         This application helps travelers discover ideal destinations based on your preferences.
         
+        **Updated Demo**: [CityHood](https://cityhood.vercel.app/)
+        
         ### How it works:
         
         **City Recommendations:**
